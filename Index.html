@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>냉장고 메이트 - 스마트 식재료 & 건강 레시피 관리</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React & ReactDOM CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <!-- Babel CDN -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700&display=swap');
+    body { font-family: 'Pretendard', sans-serif; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    // 초기 샘플 데이터 (린캔버스 대상: 30~50대 자녀를 둔 주부 타겟)
+    const INITIAL_INGREDIENTS = [
+      { id: 1, name: "어린이 우유", category: "유제품", count: 2, unit: "팩", expiryDate: getOffsetDate(1), memo: "저지방 칼슘 우유" },
+      { id: 2, name: "시금치", category: "채소", count: 1, unit: "단", expiryDate: getOffsetDate(2), memo: "나물 반찬용" },
+      { id: 3, name: "무항생제 계란", category: "냉장", count: 10, unit: "알", expiryDate: getOffsetDate(4), memo: "아이 아침용" },
+      { id: 4, name: "두부", category: "냉장", count: 1, unit: "모", expiryDate: getOffsetDate(6), memo: "된장찌개용" },
+      { id: 5, name: "국내산 닭가슴살", category: "육류", count: 3, unit: "팩", expiryDate: getOffsetDate(-1), memo: "카레용 (유통기한 확인 필요)" }
+    ];
+
+    const RECIPES_DB = [
+      {
+        id: 1,
+        title: "시금치 치즈 프리타타",
+        target: "성장기 어린이용",
+        tags: ["철분보충", "고단백"],
+        requiredIngredients: ["시금치", "무항생제 계란", "어린이 우유"],
+        description: "시금치를 잘게 다져 계란물과 우유를 붓고 오븐이나 팬에 구워낸 영양 만점 계란찜 요리입니다.",
+        calories: "280 kcal"
+      },
+      {
+        id: 2,
+        title: "두부 계란 덮밥 소보로",
+        target: "소화가 잘되는 유아식",
+        tags: ["저자극", "영양균형"],
+        requiredIngredients: ["두부", "무항생제 계란"],
+        description: "으깬 두부와 계란을 간장 베이스로 고슬고슬 볶아 따뜻한 밥 위에 올려주는 간편 식단입니다.",
+        calories: "320 kcal"
+      },
+      {
+        id: 3,
+        title: "단호박 닭가슴살 카레",
+        target: "온 가족 면역 식단",
+        tags: ["면역력", "비타민풍부"],
+        requiredIngredients: ["국내산 닭가슴살"],
+        description: "기름기를 뺀 닭가슴살과 채소를 듬뿍 넣어 자극적이지 않게 끓여낸 웰빙 카레입니다.",
+        calories: "410 kcal"
+      }
+    ];
+
+    function getOffsetDate(days) {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      return d.toISOString().split('T')[0];
+    }
+
+    function calculateDDay(targetDateStr) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const target = new Date(targetDateStr);
+      target.setHours(0, 0, 0, 0);
+      const diffTime = target - today;
+      return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    }
+
+    function App() {
+      const [ingredients, setIngredients] = useState(() => {
+        const saved = localStorage.getItem('fridge_mate_items');
+        return saved ? JSON.parse(saved) : INITIAL_INGREDIENTS;
+      });
+
+      const [activeTab, setActiveTab] = useState('fridge'); // 'fridge' | 'recipes' | 'cart'
+      const [searchTerm, setSearchTerm] = useState('');
+      const [selectedCategory, setSelectedCategory] = useState('전체');
+
+      // 등록 모달 상태
+      const [isModalOpen, setIsModalOpen] = useState(false);
+      const [newItem, setNewItem] = useState({
+        name: '',
+        category: '채소',
+        count: 1,
+        unit: '개',
+        expiryDate: getOffsetDate(5),
+        memo: ''
+      });
+
+      // 가상 영수증 OCR 스캔 기능
+      const [isScanning, setIsScanning] = useState(false);
+
+      useEffect(() => {
+        localStorage.setItem('fridge_mate_items', JSON.stringify(ingredients));
+      }, [ingredients]);
+
+      useEffect(() => {
+        if (window.lucide) window.lucide.createIcons();
+      });
+
+      // 유통기한 임박 식재료 (D-3 이내)
+      const expiringItems = useMemo(() => {
+        return ingredients.filter(item => {
+          const dday = calculateDDay(item.expiryDate);
+          return dday <= 3;
+        });
+      }, [ingredients]);
+
+      const handleAddItem = (e) => {
+        e.preventDefault();
+        if (!newItem.name.trim()) return;
+        const item = {
+          id: Date.now(),
+          ...newItem,
+          count: Number(newItem.count)
+        };
+        setIngredients([item, ...ingredients]);
+        setIsModalOpen(false);
+        setNewItem({
+          name: '',
+          category: '채소',
+          count: 1,
+          unit: '개',
+          expiryDate: getOffsetDate(5),
+          memo: ''
+        });
+      };
+
+      const handleDeleteItem = (id) => {
+        setIngredients(ingredients.filter(item => item.id !== id));
+      };
+
+      // 발표 시연용 영수증 자동 스캔 시뮬레이션
+      const handleSimulateScan = () => {
+        setIsScanning(true);
+        setTimeout(() => {
+          const scannedItems = [
+            { id: Date.now() + 1, name: "유기농 파프리카", category: "채소", count: 2, unit: "개", expiryDate: getOffsetDate(4), memo: "이마트 영수증 자동인식" },
+            { id: Date.now() + 2, name: "생연어 횟감", category: "수산", count: 1, unit: "팩", expiryDate: getOffsetDate(1), memo: "오늘 저녁 회/초밥용" }
+          ];
+          setIngredients(prev => [...scannedItems, ...prev]);
+          setIsScanning(false);
+          alert("영수증 스캔 완료! 식재료 2건이 자동으로 등록되었습니다.");
+        }, 1200);
+      };
+
+      const filteredIngredients = ingredients.filter(item => {
+        const matchesCategory = selectedCategory === '전체' || item.category === selectedCategory;
+        const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase());
+        return matchesCategory && matchesSearch;
+      });
+
+      return (
+        <div className="min-h-screen pb-20 flex flex-col max-w-lg mx-auto bg-white shadow-xl relative border-x border-slate-100">
+          
+          {/* Header */}
+          <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-100 px-5 py-4 flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white font-bold">
+                M
+              </div>
+              <div>
+                <h1 className="text-lg font-bold text-slate-900 leading-tight">냉장고 메이트</h1>
+                <p className="text-xs text-emerald-600 font-medium">우리 집 AI 스마트 식재료 매니저</p>
+              </div>
+            </div>
+            <button 
+              onClick={handleSimulateScan}
+              disabled={isScanning}
+              className="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-semibold px-3 py-1.5 rounded-full flex items-center gap-1 transition"
+            >
+              {isScanning ? "스캔 중..." : "📸 영수증 스캔"}
+            </button>
+          </header>
+
+          {/* D-Day 유통기한 알림 배너 */}
+          {expiringItems.length > 0 && (
+            <div className="mx-4 mt-3 p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-start space-x-3 shadow-sm">
+              <span className="text-xl">⚠️</span>
+              <div className="flex-1 text-xs">
+                <p className="font-bold text-amber-900">
+                  유통기한 임박 주의 ({expiringItems.length}건)
+                </p>
+                <p className="text-amber-700 mt-0.5 leading-relaxed">
+                  <span className="font-semibold">{expiringItems.map(i => i.name).join(', ')}</span>의 기한이 얼마 남지 않았습니다. 레시피 추천을 확인해보세요!
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Tab Navigation */}
+          <div className="flex border-b border-slate-100 mt-2 px-4 bg-white">
+            <button 
+              onClick={() => setActiveTab('fridge')}
+              className={`flex-1 py-3 text-sm font-semibold text-center border-b-2 transition ${
+                activeTab === 'fridge' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-400'
+              }`}
+            >
+              냉장고 현황 ({ingredients.length})
+            </button>
+            <button 
+              onClick={() => setActiveTab('recipes')}
+              className={`flex-1 py-3 text-sm font-semibold text-center border-b-2 transition ${
+                activeTab === 'recipes' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-400'
+              }`}
+            >
+              맞춤 레시피 🍳
+            </button>
+            <button 
+              onClick={() => setActiveTab('cart')}
+              className={`flex-1 py-3 text-sm font-semibold text-center border-b-2 transition ${
+                activeTab === 'cart' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-400'
+              }`}
+            >
+              장보기 리스트 🛒
+            </button>
+          </div>
+
+          {/* Main Content Area */}
+          <main className="flex-1 p-4 overflow-y-auto">
+
+            {/* TAB 1: 냉장고 현황 */}
+            {activeTab === 'fridge' && (
+              <div>
+                {/* Search & Filter */}
+                <div className="flex gap-2 mb-3">
+                  <input
+                    type="text"
+                    placeholder="식재료 검색..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <select 
+                    value={selectedCategory} 
+                    onChange={(e) => setSelectedCategory(e.target.value)}
+                    className="bg-slate-50 border border-slate-200 text-xs rounded-xl px-2.5 py-2 font-medium text-slate-600"
+                  >
+                    <option value="전체">카테고리 전체</option>
+                    <option value="채소">채소</option>
+                    <option value="육류">육류</option>
+                    <option value="수산">수산</option>
+                    <option value="유제품">유제품</option>
+                    <option value="냉장">가공/냉장</option>
+                  </select>
+                </div>
+
+                {/* 식재료 리스트 카드 */}
+                <div className="space-y-2.5">
+                  {filteredIngredients.length === 0 ? (
+                    <div className="py-16 text-center text-slate-400">
+                      <p className="text-3xl mb-2">🧊</p>
+                      <p className="text-sm">보관 중인 식재료가 없습니다.</p>
+                      <p className="text-xs text-slate-400 mt-1">우측 하단 '+' 버튼으로 등록해보세요.</p>
+                    </div>
+                  ) : (
+                    filteredIngredients.map(item => {
+                      const dday = calculateDDay(item.expiryDate);
+                      const isExpired = dday < 0;
+                      const isUrgent = dday >= 0 && dday <= 2;
+
+                      return (
+                        <div key={item.id} className="p-3.5 bg-white border border-slate-100 rounded-xl shadow-xs flex items-center justify-between hover:border-slate-200 transition">
+                          <div className="flex items-center space-x-3">
+                            <span className="text-xs px-2 py-1 bg-slate-100 text-slate-600 rounded-md font-medium">
+                              {item.category}
+                            </span>
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <h4 className="font-semibold text-slate-800 text-sm">{item.name}</h4>
+                                <span className="text-xs text-slate-400">({item.count}{item.unit})</span>
+                              </div>
+                              <p className="text-xs text-slate-400 mt-0.5">
+                                기한: {item.expiryDate} {item.memo && `· ${item.memo}`}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center space-x-2">
+                            <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${
+                              isExpired 
+                                ? 'bg-red-100 text-red-600' 
+                                : isUrgent 
+                                ? 'bg-amber-100 text-amber-700' 
+                                : 'bg-emerald-50 text-emerald-700'
+                            }`}>
+                              {isExpired ? `기한만료 (D+${Math.abs(dday)})` : dday === 0 ? 'D-Day' : `D-${dday}`}
+                            </span>
+                            <button 
+                              onClick={() => handleDeleteItem(item.id)}
+                              className="text-slate-300 hover:text-red-500 p-1 text-sm transition"
+                              title="삭제"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: 건강 레시피 추천 */}
+            {activeTab === 'recipes' && (
+              <div className="space-y-4">
+                <div className="bg-emerald-50 border border-emerald-100 p-3.5 rounded-2xl">
+                  <p className="text-xs font-bold text-emerald-800">🥗 냉장고 맞춤형 AI 영양사 솔루션</p>
+                  <p className="text-xs text-emerald-600 mt-1 leading-snug">
+                    현재 보관 중인 재료와 아이 영양 밸런스를 고려해 최적의 메뉴를 추천합니다.
+                  </p>
+                </div>
+
+                {RECIPES_DB.map(recipe => {
+                  const owned = recipe.requiredIngredients.filter(req => 
+                    ingredients.some(ing => ing.name.includes(req))
+                  );
+                  const missing = recipe.requiredIngredients.filter(req => 
+                    !ingredients.some(ing => ing.name.includes(req))
+                  );
+
+                  return (
+                    <div key={recipe.id} className="border border-slate-100 bg-white rounded-2xl p-4 shadow-sm">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <span className="text-[11px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                            {recipe.target}
+                          </span>
+                          <h3 className="font-bold text-base text-slate-800 mt-1">{recipe.title}</h3>
+                        </div>
+                        <span className="text-xs text-slate-400 font-medium">{recipe.calories}</span>
+                      </div>
+
+                      <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+                        {recipe.description}
+                      </p>
+
+                      <div className="mt-3 pt-3 border-t border-slate-100 text-xs">
+                        <div className="flex flex-wrap gap-1 mb-2">
+                          {recipe.tags.map(t => (
+                            <span key={t} className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">#{t}</span>
+                          ))}
+                        </div>
+
+                        <div className="text-xs space-y-1">
+                          <p className="text-emerald-700">
+                            ✓ 냉장고 보유 재료: <span className="font-medium">{owned.join(', ') || '없음'}</span>
+                          </p>
+                          {missing.length > 0 && (
+                            <p className="text-amber-600">
+                              + 부족한 재료: <span className="font-medium">{missing.join(', ')}</span>
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* TAB 3: 장보기 리스트 */}
+            {activeTab === 'cart' && (
+              <div className="space-y-4">
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl">
+                  <h3 className="text-sm font-bold text-slate-800 mb-1">🛒 중복 구매 방지 스마트 장보기</h3>
+                  <p className="text-xs text-slate-500">
+                    부족한 재료만 골라 담고, 쿠팡/마켓컬리 주문 전 냉장고 재료를 체크하세요.
+                  </p>
+                </div>
+
+                <div className="border border-dashed border-slate-200 p-6 rounded-2xl text-center">
+                  <span className="text-3xl">📦</span>
+                  <p className="text-sm font-semibold text-slate-700 mt-2">온라인 마트 연동 예정</p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    추천 레시피에서 부족한 재료를 한 번의 클릭으로 장바구니에 담을 수 있는 기능이 곧 연동됩니다.
+                  </p>
+                </div>
+              </div>
+            )}
+
+          </main>
+
+          {/* Floating Action Button (재료 등록) */}
+          <button 
+            onClick={() => setIsModalOpen(true)}
+            className="fixed bottom-6 right-6 md:right-auto md:left-[calc(50%+150px)] w-13 h-13 p-3.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full shadow-lg flex items-center justify-center transition active:scale-95 z-40"
+            title="식재료 등록"
+          >
+            <span className="text-xl font-bold">+</span>
+          </button>
+
+          {/* 등록 모달 */}
+          {isModalOpen && (
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-end sm:items-center justify-center z-50 p-4">
+              <div className="bg-white w-full max-w-sm rounded-3xl p-5 shadow-2xl animate-fade-in">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-bold text-base text-slate-900">식재료 수동 등록</h3>
+                  <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+                </div>
+
+                <form onSubmit={handleAddItem} className="space-y-3">
+                  <div>
+                    <label className="text-xs font-semibold text-slate-600">식재료명</label>
+                    <input 
+                      type="text" 
+                      required
+                      placeholder="예: 양파, 애호박, 소고기" 
+                      value={newItem.name}
+                      onChange={e => setNewItem({...newItem, name: e.target.value})}
+                      className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs font-semibold text-slate-600">분류</label>
+                      <select 
+                        value={newItem.category}
+                        onChange={e => setNewItem({...newItem, category: e.target.value})}
+                        className="w-full mt-1 px-2.5 py-2 border border-slate-200 rounded-xl text-sm bg-white outline-none"
+                      >
+                        <option value="채소">채소</option>
+                        <option value="육류">육류</option>
+                        <option value="수산">수산</option>
+                        <option value="유제품">유제품</option>
+                        <option value="냉장">가공/냉장</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-slate-600">수량</label>
+                      <div className="flex gap-1 mt-1">
+                        <input 
+                          type="number" 
+                          min="1"
+                          value={newItem.count}
+                          onChange={e => setNewItem({...newItem, count: e.target.value})}
+                          className="w-16 px-2 py-2 border border-slate-200 rounded-xl text-sm text-center outline-none"
+                        />
+                        <input 
+                          type="text" 
+                          value={newItem.unit}
+                          onChange={e => setNewItem({...newItem, unit: e.target.value})}
+                          placeholder="단위"
+                          className="w-full px-2 py-2 border border-slate-200 rounded-xl text-sm outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-slate-600">유통기한</label>
+                    <input 
+                      type="date" 
+                      required
+                      value={newItem.expiryDate}
+                      onChange={e => setNewItem({...newItem, expiryDate: e.target.value})}
+                      className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-xl text-sm outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-slate-600">간단 메모</label>
+                    <input 
+                      type="text" 
+                      placeholder="예: 아이 볶음밥용, 소분 냉동" 
+                      value={newItem.memo}
+                      onChange={e => setNewItem({...newItem, memo: e.target.value})}
+                      className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-xl text-sm outline-none"
+                    />
+                  </div>
+
+                  <div className="pt-2 flex gap-2">
+                    <button 
+                      type="button" 
+                      onClick={() => setIsModalOpen(false)}
+                      className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-600"
+                    >
+                      취소
+                    </button>
+                    <button 
+                      type="submit" 
+                      className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-sm font-semibold text-white shadow-md transition"
+                    >
+                      추가하기
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
